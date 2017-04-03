@@ -1,0 +1,58 @@
+---
+- name: deploy-tarball-payload
+  hosts: target_nodes
+  #strategy: free
+  vars:
+    HOST_COUNT: "{{ groups['target-nodes'] | length }}"
+    NODE_START: -1
+
+  # clean worker nodes of previous runs
+  tasks:
+    - name: clean_processed
+      file:
+        path: "/tmp/data/processed"
+        states: absent
+
+    - name: collect_failures
+      find:
+        paths: "/tmp/data/failures/"
+        hidden: True
+        recurse: True
+      register: collected_failures
+
+    - name: collect_logs
+      find:
+        paths: "/tmp/data/logs/"
+        hidden: True
+        recurse: True
+      register: collected_logs
+
+    - name: remove_failures_and_logs
+      file:
+        path: "{{ item.path }}"
+        state: absent
+      with_items: "{{ collected_failures.files + collected_logs.files }}"
+
+    # copy and extract verification app
+    - name: copy_and_extract_tarball
+      unarchive:
+        src: tarball.tar.gz
+        dest: /tmp
+
+    # synchronize master verification data set
+    - name: sync_data
+      synchronize:
+        src: data
+        dest: /tmp
+
+    # generate script with hash values to identify worker node
+    - name: generate_shell_script
+      shell: echo -e "some_commands -hashTotal {{ HOST_COUNT }} -hashSelf {% for thishost in play_hosts %}{% if inventory_hostname==thishost %}{{ NODE_START + loop.index }}{% endfor %}" > check.sh
+      args:
+        chdir: /tmp
+
+    - name: set_script_executable
+      file:
+        path: /tmp/check.sh
+        state: touch
+        mode: "u=rwx,g=r,o=r"
